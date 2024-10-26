@@ -44,8 +44,9 @@
         }
 
         .extractedHead img {
-            max-width: 200px;
-            height: auto;
+            width: 200px;
+            height: 200px;
+            object-fit: cover;
         }
 
         #status {
@@ -124,58 +125,105 @@
             }
         }
 
-        function extractHead(box, landmarks, imgWidth, imgHeight, index) {
-            const leftEyebrow = landmarks.slice(17, 22);  // Left eyebrow points
-            const rightEyebrow = landmarks.slice(22, 27);  // Right eyebrow points
-            const jawline = landmarks.slice(0, 17);  // Jawline points
-            const foreheadTop = landmarks.filter((p, i) => i >= 19 && i <= 24); // Points slightly above eyebrows
+function extractHead(box, landmarks, imgWidth, imgHeight, index) {
+    const leftEyebrow = landmarks.slice(17, 22);
+    const rightEyebrow = landmarks.slice(22, 27);
+    const jawline = landmarks.slice(0, 17);
+    const foreheadTop = landmarks.filter((p, i) => i >= 19 && i <= 24);
 
-            // Calculate bounding box vertices
-            const minX = Math.min(...foreheadTop.map(p => p.x), ...jawline.map(p => p.x));
-            const maxX = Math.max(...foreheadTop.map(p => p.x), ...jawline.map(p => p.x));
-            const minY = Math.min(...foreheadTop.map(p => p.y));
-            const maxY = Math.max(...jawline.map(p => p.y));
+    // Calculate initial bounding box vertices
+    const minX = Math.min(...foreheadTop.map(p => p.x), ...jawline.map(p => p.x));
+    const maxX = Math.max(...foreheadTop.map(p => p.x), ...jawline.map(p => p.x));
+    const minY = Math.min(...foreheadTop.map(p => p.y));
+    const maxY = Math.max(...jawline.map(p => p.y));
 
-            // Extend the bounding box to include the top of the head
-            const topOffset = minY - (jawline[8].y - minY) * 0.7; // Extend by 70% of the distance from the chin to the forehead top points
+    // Calculate face dimensions
+    const faceHeight = maxY - minY;
+    const faceWidth = maxX - minX;
+    const faceCenterX = minX + (faceWidth / 2);
 
-            // Extend box below the chin to include a little more of the chin
-            const bottomOffset = maxY + (maxY - minY) * 0.1; // 10% extra space below the chin
+    // Fine-tuned spacing ratios
+    const topSpaceRatio = 0.67;    // Reduced from 1.2 for less space above
+    const bottomSpaceRatio = 0.13;  // Increased from 0.3 for more space below
 
-            // Reduce the side offset to include less space on the sides for ears
-            const sidesOffset = (maxX - minX) * 0.1; // 10% extra space on each side for ears
+    // Calculate vertical position with adjusted ratios
+    const totalSpaceRatio = topSpaceRatio + 1 + bottomSpaceRatio; // 1 is for the face itself
+    const faceCenterY = minY + (faceHeight / 2);
+    
+    // Calculate desired dimensions
+    const desiredHeight = faceHeight * totalSpaceRatio;
+    const desiredWidth = desiredHeight; // Keep it square
 
-            const x = Math.max(0, minX - sidesOffset);
-            const y = Math.max(0, topOffset);
-            const width = Math.min(imgWidth - x, maxX - minX + 2 * sidesOffset);
-            const height = Math.min(imgHeight - y, bottomOffset - y);
+    // Calculate crop boundaries with adjusted vertical positioning
+    const verticalOffset = (topSpaceRatio - bottomSpaceRatio) * faceHeight / 2;
+    let cropLeft = faceCenterX - (desiredWidth / 2);
+    let cropRight = faceCenterX + (desiredWidth / 2);
+    let cropTop = faceCenterY - (desiredHeight / 2) - verticalOffset;
+    let cropBottom = faceCenterY + (desiredHeight / 2) - verticalOffset;
 
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = width;
-            tempCanvas.height = height;
+    // Adjust crop boundaries to stay within image bounds
+    if (cropLeft < 0) {
+        cropRight = Math.min(desiredWidth, imgWidth);
+        cropLeft = 0;
+    }
+    if (cropRight > imgWidth) {
+        cropLeft = Math.max(0, imgWidth - desiredWidth);
+        cropRight = imgWidth;
+    }
+    if (cropTop < 0) {
+        cropBottom = Math.min(desiredHeight, imgHeight);
+        cropTop = 0;
+    }
+    if (cropBottom > imgHeight) {
+        cropTop = Math.max(0, imgHeight - desiredHeight);
+        cropBottom = imgHeight;
+    }
 
-            const tempCtx = tempCanvas.getContext('2d');
-            tempCtx.drawImage(canvas, x, y, width, height, 0, 0, width, height);
+    // Calculate final dimensions ensuring they're equal (square)
+    const finalSize = Math.min(
+        cropRight - cropLeft,
+        cropBottom - cropTop,
+        desiredWidth,
+        desiredHeight
+    );
 
-            // Center the head within the bounding box
-            const centeredCanvas = document.createElement('canvas');
-            centeredCanvas.width = width;
-            centeredCanvas.height = height;
-            const centeredCtx = centeredCanvas.getContext('2d');
-            centeredCtx.drawImage(tempCanvas, 0, 0, width, height, 0, 0, width, height);
+    // Recenter the crop box while maintaining the square shape
+    const finalLeft = Math.max(0, Math.min(
+        faceCenterX - (finalSize / 2),
+        imgWidth - finalSize
+    ));
+    
+    // Adjust vertical position while maintaining adjusted spacing
+    const finalTop = Math.max(0, Math.min(
+        faceCenterY - (finalSize / 2) - verticalOffset,
+        imgHeight - finalSize
+    ));
 
-            resizeAndDisplay(centeredCanvas, index);
-        }
+    // Create temporary canvas for the crop
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = finalSize;
+    tempCanvas.height = finalSize;
+    const tempCtx = tempCanvas.getContext('2d');
+
+    // Draw the cropped region
+    tempCtx.drawImage(
+        canvas,
+        finalLeft, finalTop, finalSize, finalSize,  // Source coordinates
+        0, 0, finalSize, finalSize                  // Destination coordinates
+    );
+
+    resizeAndDisplay(tempCanvas, index);
+}
 
         function resizeAndDisplay(canvas, index) {
             const maxSize = 99 * 1024; // 99KB
-            let quality = 0.95;
+            let quality = 0.99;
             let scale = 1;
 
             const resizeAndCheck = () => {
                 const scaledCanvas = document.createElement('canvas');
-                scaledCanvas.width = canvas.width * scale;
                 scaledCanvas.height = canvas.height * scale;
+                scaledCanvas.width = scaledCanvas.height;
                 const ctx = scaledCanvas.getContext('2d');
                 ctx.drawImage(canvas, 0, 0, scaledCanvas.width, scaledCanvas.height);
 
